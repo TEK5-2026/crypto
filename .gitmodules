@@ -1,0 +1,3 @@
+[submodule "coffeeToken/lib/forge-std"]
+	path = coffeeToken/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
