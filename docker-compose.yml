@@ -1,0 +1,9 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.front
+    container_name: tailadmin_front
+    ports:
+      - "8080:80"
+    restart: unless-stopped
