@@ -1,3 +1,6 @@
 [submodule "coffeeToken/lib/forge-std"]
 	path = coffeeToken/lib/forge-std
 	url = https://github.com/foundry-rs/forge-std
+[submodule "coffeeToken/lib/openzeppelin-contracts"]
+	path = coffeeToken/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
