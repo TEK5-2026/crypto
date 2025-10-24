@@ -19,10 +19,16 @@ contract CoffeeDEXTest is Test {
 
         kyc.setWhitelist(address(this), true);
         kyc.setWhitelist(user1, true);
+        // Whitelist the DEX so it can receive tokens and interact with the token contract
+        kyc.setWhitelist(address(dex), true);
 
         // Donner des tokens à user1 pour swap
         token.transfer(user1, 100 ether);
     }
+
+    // Allow this test contract to receive ETH from the DEX
+    receive() external payable {}
+
 
     function testAddLiquidity() public {
         token.approve(address(dex), 50 ether);

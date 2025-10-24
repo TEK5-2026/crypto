@@ -26,7 +26,8 @@ contract CoffeeDEX {
     // 👇 Ajouter de la liquidité
     function addLiquidity(uint256 tokenAmount) external payable onlyAllowed(msg.sender) {
         require(token.balanceOf(msg.sender) >= tokenAmount, "Not enough tokens");
-        token.transfer(address(this), tokenAmount);
+        // pull tokens from the liquidity provider into the DEX using allowance
+        token.transferFrom(msg.sender, address(this), tokenAmount);
         tokenReserve += tokenAmount;
         ethReserve += msg.value;
 
@@ -50,8 +51,8 @@ contract CoffeeDEX {
         require(token.balanceOf(msg.sender) >= tokenIn, "Not enough tokens");
         uint256 ethOut = (tokenIn * ethReserve) / tokenReserve;
         require(address(this).balance >= ethOut, "Not enough ETH in pool");
-
-        token.transfer(address(this), tokenIn);
+        // pull tokens from the user into the pool using allowance
+        token.transferFrom(msg.sender, address(this), tokenIn);
         tokenReserve += tokenIn;
         ethReserve -= ethOut;
 
