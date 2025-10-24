@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { IndexerService } from './blockchain/indexer.service';
-import { TransferEntity } from './blockchain/transfer.entity';
+import { UsersModule } from './users/users.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -15,17 +15,19 @@ import { TransferEntity } from './blockchain/transfer.entity';
       useFactory: (config: ConfigService) => ({
         type: 'postgres',
         host: config.get<string>('DB_HOST'),
-        port: config.get<number>('DB_PORT'),
+        port: parseInt(config.get<string>('DB_PORT', '5432'), 10),
         username: config.get<string>('DB_USER'),
         password: config.get<string>('DB_PASSWORD'),
         database: config.get<string>('DB_NAME'),
-        entities: [TransferEntity],
-        synchronize: true, // ⚠️ uniquement pour dev, met à false en prod
+        // ensure entities are registered
+        entities: [__dirname + '/**/*.entity{.ts,.js}'],
+        // alternative: autoLoadEntities: true,
+        synchronize: true,
         logging: true,
       }),
     }),
-    TypeOrmModule.forFeature([TransferEntity]),
+    UsersModule,
+    AuthModule,
   ],
-  providers: [IndexerService],
 })
 export class AppModule {}
