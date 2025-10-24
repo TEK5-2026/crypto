@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ethers } from 'ethers';
 import { DataSource } from 'typeorm';
 import { TransferEntity } from './transfer.entity';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class IndexerService implements OnModuleInit {
@@ -11,34 +12,30 @@ export class IndexerService implements OnModuleInit {
   private tokenContractWS: ethers.Contract;
   private lastIndexedBlock = 0;
 
-  private BATCH_SIZE = 1000;
+  private readonly BATCH_SIZE = 10;
 
-  constructor(private dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly configService: ConfigService,
+  ) {}
 
   async onModuleInit() {
+    const rpcUrl = this.configService.get<string>('RPC_URL');
+    const tokenAddress = this.configService.get<string>('COFFEE_TOKEN_ADDRESS');
+
+    if (!rpcUrl) throw new Error('RPC_URL not set in .env');
+    if (!tokenAddress) throw new Error('COFFEE_TOKEN_ADDRESS not set in .env');
+
     // Providers
-    this.httpProvider = new ethers.JsonRpcProvider(process.env.RPC_URL);
-    this.wsProvider = new ethers.WebSocketProvider(
-      process.env.RPC_URL.replace('https://', 'wss://')
-    );
+    this.httpProvider = new ethers.JsonRpcProvider(rpcUrl);
+    this.wsProvider = new ethers.WebSocketProvider(rpcUrl.replace('https://', 'wss://'));
 
-    const erc20Abi = [
-      "event Transfer(address indexed from, address indexed to, uint256 value)"
-    ];
+    // ERC20 Transfer ABI
+    const erc20Abi = ["event Transfer(address indexed from, address indexed to, uint256 value)"];
+    this.tokenContractHTTP = new ethers.Contract(tokenAddress, erc20Abi, this.httpProvider);
+    this.tokenContractWS = new ethers.Contract(tokenAddress, erc20Abi, this.wsProvider);
 
-    this.tokenContractHTTP = new ethers.Contract(
-      process.env.COFFEE_TOKEN_ADDRESS,
-      erc20Abi,
-      this.httpProvider
-    );
-
-    this.tokenContractWS = new ethers.Contract(
-      process.env.COFFEE_TOKEN_ADDRESS,
-      erc20Abi,
-      this.wsProvider
-    );
-
-    // Dernier bloc indexé depuis DB
+    // Récupérer dernier bloc indexé
     const latestTransfer = await this.dataSource.getRepository(TransferEntity)
       .createQueryBuilder('t')
       .orderBy('t.blockNumber', 'DESC')
@@ -47,9 +44,10 @@ export class IndexerService implements OnModuleInit {
 
     console.log(`📌 Starting indexer from block ${this.lastIndexedBlock}`);
 
-    // Historique batch
+    // Indexation historique
     await this.indexHistorical();
 
+    // Écoute en temps réel
     this.listenRealtime();
   }
 
@@ -63,7 +61,6 @@ export class IndexerService implements OnModuleInit {
 
     for (let start = this.lastIndexedBlock + 1; start <= latestBlock; start += this.BATCH_SIZE) {
       const end = Math.min(start + this.BATCH_SIZE - 1, latestBlock);
-      console.log(`📌 Fetching blocks ${start} to ${end}`);
       const events = await this.tokenContractHTTP.queryFilter(filter, start, end);
 
       for (const event of events) {
@@ -81,23 +78,25 @@ export class IndexerService implements OnModuleInit {
           from,
           to,
           value: value.toString(),
-          block: event.blockNumber
+          block: event.blockNumber,
         });
       } catch (err) {
         console.error('Error saving transfer:', err);
       }
     });
 
-    this.wsProvider._websocket.on('close', async () => {
+    // Reconnexion WS robuste
+    (this.wsProvider.websocket as any).on('close', async () => {
       console.log('⚡ WebSocket closed. Reconnecting...');
-      setTimeout(() => this.listenRealtime(), 1000);
+      setTimeout(() => this.listenRealtime(), 2000);
     });
   }
 
-  private async saveEvent(event: ethers.Event) {
+  private async saveEvent(event: any) {
     const block = await this.httpProvider.getBlock(event.blockNumber);
-    const repo = this.dataSource.getRepository(TransferEntity);
+    if (!block) throw new Error(`Block ${event.blockNumber} not found`);
 
+    const repo = this.dataSource.getRepository(TransferEntity);
     const transfer = repo.create({
       transactionHash: event.transactionHash,
       blockNumber: event.blockNumber,
@@ -106,7 +105,7 @@ export class IndexerService implements OnModuleInit {
       tokenAddress: event.address,
       from: event.args?.from,
       to: event.args?.to,
-      value: event.args?.value as bigint
+      value: BigInt(event.args?.value?.toString() || '0'),
     });
 
     await repo.save(transfer);
