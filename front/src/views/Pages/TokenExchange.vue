@@ -210,25 +210,31 @@ async function initProvider() {
 async function connectWallet() {
   try {
     connecting.value = true
+
+    // Demander d'abord les comptes au provider (force l'ouverture de MetaMask)
+    if (!(window as any).ethereum) {
+      throw new Error('MetaMask non détecté dans la page')
+    }
+    await (window as any).ethereum.request({ method: 'eth_requestAccounts' })
+
+    // Puis charger ethers et initialiser le provider/signature
     const eth = await loadEthersIfNeeded().catch((err) => {
       error.value = err?.message || 'Ethers non chargé (CDN).'
       return null
     })
     if (!eth) return
+
     await initProvider()
+    // S'assurer que provider est un BrowserProvider
     if (!provider || !(provider instanceof eth.BrowserProvider)) {
-      if ((window as any).ethereum) {
-        provider = new eth.BrowserProvider((window as any).ethereum)
-      }
+      provider = new eth.BrowserProvider((window as any).ethereum)
     }
-    if (!provider || !(provider instanceof eth.BrowserProvider)) {
-      throw new Error('MetaMask non disponible')
-    }
-    await (window as any).ethereum.request({ method: 'eth_requestAccounts' })
+
     signer = await provider.getSigner()
     account.value = await signer.getAddress()
     const network = await provider.getNetwork()
     chainName.value = network.name
+
     if (ORACLE_ADDR) oracle = new eth.Contract(ORACLE_ADDR, OracleABI, signer)
     if (DEX_ADDR) dex = new eth.Contract(DEX_ADDR, SimpleDEXABI, signer)
     if (TOKEN_ADDR) token = new eth.Contract(TOKEN_ADDR, ERC20ABI, signer)
