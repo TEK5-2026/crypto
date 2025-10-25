@@ -93,6 +93,22 @@ const DEX_ADDR = import.meta.env.VITE_DEX_ADDRESS
 const TOKEN_ADDR = import.meta.env.VITE_TOKEN_ADDRESS
 
 const getHasMetaMask = () => typeof (window as any).ethereum !== 'undefined'
+// Choisit le provider injecté : préfère MetaMask si plusieurs providers sont présents
+function getInjectedProvider(): any {
+  const eth = (window as any).ethereum
+  if (!eth) return null
+  // some wallets (Coinbase Wallet) expose ethereum.providers array
+  if (Array.isArray((eth as any).providers)) {
+    const providers = (eth as any).providers
+    const meta = providers.find((p: any) => p.isMetaMask)
+    if (meta) return meta
+    const coin = providers.find((p: any) => p.isCoinbaseWallet)
+    if (coin) return coin
+    return providers[0]
+  }
+  return eth
+}
+
 const account = ref<string | null>(null)
 const connecting = ref(false)
 const chainName = ref<string | null>(null)
@@ -198,8 +214,9 @@ async function initProvider() {
     provider = null
     return
   }
-  if (getHasMetaMask()) {
-    provider = new eth.BrowserProvider((window as any).ethereum)
+  const injected = getInjectedProvider()
+  if (injected) {
+    provider = new eth.BrowserProvider(injected)
   } else if (rpcUrl) {
     provider = new eth.JsonRpcProvider(rpcUrl)
   } else {
@@ -212,10 +229,16 @@ async function connectWallet() {
     connecting.value = true
 
     // Demander d'abord les comptes au provider (force l'ouverture de MetaMask)
-    if (!(window as any).ethereum) {
-      throw new Error('MetaMask non détecté dans la page')
+    const injected = getInjectedProvider()
+    if (!injected) throw new Error('Aucun wallet injecté détecté (MetaMask/Coinbase).')
+    // Utiliser le provider sélectionné pour la requête d'accès aux comptes
+    await injected.request({ method: 'eth_requestAccounts' })
+    if (injected.isCoinbaseWallet && !injected.isMetaMask) {
+      // message informatif si Coinbase est le provider sélectionné
+      error.value = 'Wallet détecté: Coinbase Wallet. Si vous voulez utiliser MetaMask, activez/ouvrez MetaMask pour ce site.'
+    } else {
+      error.value = null
     }
-    await (window as any).ethereum.request({ method: 'eth_requestAccounts' })
 
     // Puis charger ethers et initialiser le provider/signature
     const eth = await loadEthersIfNeeded().catch((err) => {
@@ -227,7 +250,8 @@ async function connectWallet() {
     await initProvider()
     // S'assurer que provider est un BrowserProvider
     if (!provider || !(provider instanceof eth.BrowserProvider)) {
-      provider = new eth.BrowserProvider((window as any).ethereum)
+      const injected2 = getInjectedProvider() || (window as any).ethereum
+      provider = new eth.BrowserProvider(injected2)
     }
 
     signer = await provider.getSigner()
