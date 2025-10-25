@@ -37,7 +37,7 @@
         <input type="number" class="border rounded-md px-3 py-2 w-40" v-model.number="newPrice" placeholder="prix en cents" />
         <button
           class="px-4 py-2 rounded-md bg-brand-500 text-white hover:bg-brand-600 disabled:bg-gray-300"
-          :disabled="updating || !validNewPrice || !oracleReady || !signerReady"
+          :disabled="updating || !validNewPrice || !account"
           @click="updatePrice"
         >
           Mettre à jour
@@ -45,7 +45,7 @@
       </div>
       <p v-if="updateMessage" class="text-success-600 mt-2">{{ updateMessage }}</p>
       <p v-if="updateError" class="text-error-500 mt-2">{{ updateError }}</p>
-      <p v-if="!signerReady" class="text-orange-500 mt-2">Connectez MetaMask pour écrire sur la blockchain</p>
+      <p v-if="!account" class="text-orange-500 mt-2">Connectez MetaMask pour activer la mise à jour (le backend effectuera l'update)</p>
     </div>
 
     <div class="mt-10 border rounded-lg p-4 bg-white">
@@ -362,16 +362,26 @@ async function updatePrice() {
   if (!validNewPrice.value) return
   updateError.value = null
   updateMessage.value = null
+  updating.value = true
   try {
-    if (!signer || !ORACLE_ADDR) throw new Error('Signer/Oracle non prêt')
-    const eth = (window as any).ethers
-    const oc = new eth.Contract(ORACLE_ADDR, OracleABI, signer)
-    const tx = await oc.updatePrice(newPrice.value!)
-    await tx.wait()
-    updateMessage.value = `Prix mis à jour. Tx: ${tx.hash}`
+    const apiUrl = import.meta.env.VITE_ORACLE_UPDATE_URL ?? 'http://localhost:3000/oracle/update'
+    const body = { price: Number(newPrice.value) }
+    const res = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      mode: 'cors'
+    })
+    if (!res.ok) throw new Error(`API update failed: ${res.status}`)
+    // backend renvoie peut-être JSON { price: number } ou texte ; gérer les deux
+    let parsed: any = null
+    try { parsed = await res.json() } catch { parsed = await res.text().catch(() => null) }
+    updateMessage.value = parsed?.price ? `Prix mis à jour via API: ${parsed.price}` : `Prix mis à jour via API`
     await fetchPrice()
   } catch (e: any) {
     updateError.value = e?.message || 'Erreur lors de la mise à jour du prix'
+  } finally {
+    updating.value = false
   }
 }
 
