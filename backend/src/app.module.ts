@@ -5,6 +5,7 @@ import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { KycModule } from './kyc/kyc.module';
 import { OracleModule } from './oracle/oracle.module';
+import { IndexerModule } from './indexer/indexer.module';
 
 @Module({
   imports: [
@@ -31,7 +32,8 @@ import { OracleModule } from './oracle/oracle.module';
     UsersModule,
     AuthModule,
     KycModule,
-    OracleModule
+    OracleModule,
+    IndexerModule
   ],
 })
 export class AppModule {}
