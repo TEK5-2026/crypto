@@ -225,45 +225,42 @@ async function initProvider() {
 }
 
 async function connectWallet() {
+  if (connecting.value) {
+    console.log('Connexion déjà en cours...')
+    return
+  }
+
   try {
     connecting.value = true
+    error.value = null
 
-    // Demander d'abord les comptes au provider (force l'ouverture de MetaMask)
     const injected = getInjectedProvider()
-    if (!injected) throw new Error('Aucun wallet injecté détecté (MetaMask/Coinbase).')
-    // Utiliser le provider sélectionné pour la requête d'accès aux comptes
-    await injected.request({ method: 'eth_requestAccounts' })
-    if (injected.isCoinbaseWallet && !injected.isMetaMask) {
-      // message informatif si Coinbase est le provider sélectionné
-      error.value = 'Wallet détecté: Coinbase Wallet. Si vous voulez utiliser MetaMask, activez/ouvrez MetaMask pour ce site.'
-    } else {
-      error.value = null
+    if (!injected) {
+      throw new Error('MetaMask non détecté')
     }
 
-    // Puis charger ethers et initialiser le provider/signature
-    const eth = await loadEthersIfNeeded().catch((err) => {
-      error.value = err?.message || 'Ethers non chargé (CDN).'
-      return null
-    })
-    if (!eth) return
+    try {
+      await injected.request({ method: 'eth_requestAccounts' })
+    } catch (e: any) {
+      if (e?.code === -32002) {
+        error.value = 'Une demande de connexion est déjà en attente dans MetaMask. Veuillez vérifier votre extension.'
+        return
+      }
+      throw e
+    }
+
+    const eth = await loadEthersIfNeeded()
+    if (!eth) throw new Error('Ethers non chargé')
 
     await initProvider()
-    // S'assurer que provider est un BrowserProvider
-    if (!provider || !(provider instanceof eth.BrowserProvider)) {
-      const injected2 = getInjectedProvider() || (window as any).ethereum
-      provider = new eth.BrowserProvider(injected2)
-    }
-
     signer = await provider.getSigner()
     account.value = await signer.getAddress()
     const network = await provider.getNetwork()
     chainName.value = network.name
 
-    if (ORACLE_ADDR) oracle = new eth.Contract(ORACLE_ADDR, OracleABI, signer)
-    if (DEX_ADDR) dex = new eth.Contract(DEX_ADDR, SimpleDEXABI, signer)
-    if (TOKEN_ADDR) token = new eth.Contract(TOKEN_ADDR, ERC20ABI, signer)
   } catch (e: any) {
-    error.value = e?.message || 'Erreur MetaMask'
+    console.error('Erreur connexion:', e)
+    error.value = e?.message || 'Erreur de connexion'
   } finally {
     connecting.value = false
   }
@@ -273,15 +270,24 @@ async function fetchPrice() {
   loading.value = true
   error.value = null
   try {
-    await initProvider()
-    const readProvider = signer ?? provider
-    if (!ORACLE_ADDR || !readProvider) throw new Error('Oracle/Provider non configuré')
-    const eth = (window as any).ethers
-    const oc = new eth.Contract(ORACLE_ADDR, OracleABI, readProvider)
-    const p: bigint = await oc.getPrice()
-    price.value = Number(p)
+    console.log('Début fetch...')
+    const response = await fetch('http://localhost:3000/oracle/price', {
+      method: 'GET',
+      headers: {
+        'Accept': '*/*',
+      },
+      credentials: 'same-origin',
+      mode: 'cors'
+    })
+
+    console.log('Réponse:', response)
+    const text = await response.text()
+    console.log('Contenu:', text)
+
+    price.value = Number(text.replace('%', ''))
   } catch (e: any) {
-    error.value = e?.message || 'Erreur lors de la lecture du prix'
+    console.error('Erreur détaillée:', e)
+    error.value = 'Erreur lors de la lecture du prix'
   } finally {
     loading.value = false
   }
