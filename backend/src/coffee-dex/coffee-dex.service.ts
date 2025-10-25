@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ethers } from 'ethers';
+import { ethers, parseUnits } from 'ethers';
 import { parseEther } from 'ethers';
-import CoffeeDEX_ABI from './CoffeeDEX.abi.json'; // Importer directement
+import CoffeeDEX_ABI from './CoffeeDEX.abi.json';
 
 @Injectable()
 export class CoffeeDexService {
@@ -13,7 +13,7 @@ export class CoffeeDexService {
   constructor(private configService: ConfigService) {
     const rpcUrl = this.configService.get<string>('RPC_URL');
     const privateKey = this.configService.get<string>('PRIVATE_KEY');
-    const contractAddress = this.configService.get<string>('CONTRACT_ADDRESS');
+    const contractAddress = this.configService.get<string>('COFFEE_DEX_ADDRESS');
 
     this.provider = new ethers.JsonRpcProvider(rpcUrl);
     this.wallet = new ethers.Wallet(privateKey!, this.provider);
@@ -33,7 +33,14 @@ export class CoffeeDexService {
   }
 
   async swapTokenToEth(tokenAmount: number): Promise<string> {
-    const tx = await this.contract.swapTokenToEth(tokenAmount);
+    const TOKEN_DECIMALS = 18; 
+
+    const tokenAmountInSmallestUnit = parseUnits(
+      tokenAmount.toString(), 
+      TOKEN_DECIMALS
+    );
+
+    const tx = await this.contract.swapTokenToEth(tokenAmountInSmallestUnit);
     await tx.wait();
     return tx.hash;
   }
