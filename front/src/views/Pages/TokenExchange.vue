@@ -37,7 +37,7 @@
         <input type="number" class="border rounded-md px-3 py-2 w-40" v-model.number="newPrice" placeholder="prix en cents" />
         <button
           class="px-4 py-2 rounded-md bg-brand-500 text-white hover:bg-brand-600 disabled:bg-gray-300"
-          :disabled="updating || !validNewPrice || !oracleReady || !signerReady"
+          :disabled="updating || !validNewPrice || !account"
           @click="updatePrice"
         >
           Mettre à jour
@@ -45,7 +45,7 @@
       </div>
       <p v-if="updateMessage" class="text-success-600 mt-2">{{ updateMessage }}</p>
       <p v-if="updateError" class="text-error-500 mt-2">{{ updateError }}</p>
-      <p v-if="!signerReady" class="text-orange-500 mt-2">Connectez MetaMask pour écrire sur la blockchain</p>
+      <p v-if="!account" class="text-orange-500 mt-2">Connectez MetaMask pour activer la mise à jour (le backend effectuera l'update)</p>
     </div>
 
     <div class="mt-10 border rounded-lg p-4 bg-white">
@@ -56,20 +56,18 @@
           <input type="text" class="border rounded-md px-3 py-2 w-48" v-model="ethToSpend" placeholder="ETH à dépenser" />
           <button
             class="ml-3 px-4 py-2 rounded-md bg-brand-500 text-white hover:bg-brand-600 disabled:bg-gray-300"
-            :disabled="!dexReady || !signerReady || buying"
+            :disabled="!account || buying"
             @click="buyTokens"
           >Acheter</button>
-          <p v-if="!dexReady" class="text-orange-500 mt-2">Configurez VITE_DEX_ADDRESS dans front/.env</p>
         </div>
         <div>
           <h3 class="font-medium mb-2">Vendre des CTK contre ETH</h3>
           <input type="text" class="border rounded-md px-3 py-2 w-48" v-model="tokensToSell" placeholder="CTK à vendre" />
           <button
             class="ml-3 px-4 py-2 rounded-md bg-brand-500 text-white hover:bg-brand-600 disabled:bg-gray-300"
-            :disabled="!dexReady || !tokenReady || !signerReady || selling"
+            :disabled="!account || selling"
             @click="sellTokens"
           >Vendre</button>
-          <p v-if="!tokenReady" class="text-orange-500 mt-2">Configurez VITE_TOKEN_ADDRESS dans front/.env</p>
         </div>
       </div>
       <p v-if="swapError" class="text-error-500 mt-2">{{ swapError }}</p>
@@ -109,6 +107,64 @@ function getInjectedProvider(): any {
   return eth
 }
 
+// Vérifie si le wallet est déjà autorisé (pas de prompt)
+async function checkConnection(): Promise<boolean> {
+  const injected = getInjectedProvider()
+  if (!injected) return false
+  try {
+    const accounts = await injected.request({ method: 'eth_accounts' })
+    if (Array.isArray(accounts) && accounts.length > 0) {
+      // s'assurer que provider/signature sont prêts
+      await initProvider().catch(() => null)
+      if (provider) {
+        try {
+          signer = await provider.getSigner()
+          account.value = accounts[0]
+          const network = await provider.getNetwork()
+          chainName.value = network?.name ?? null
+        } catch (e) {
+          // ignore signer errors
+        }
+      } else {
+        account.value = accounts[0]
+      }
+      return true
+    }
+  } catch (e) {
+    console.warn('checkConnection error', e)
+  }
+  return false
+}
+
+// Écoute les changements côté extension (compte / réseau)
+function attachWalletListeners() {
+  const injected = getInjectedProvider()
+  if (!injected || typeof injected.on !== 'function') return
+  try {
+    injected.on('accountsChanged', async (accounts: string[]) => {
+      if (Array.isArray(accounts) && accounts.length > 0) {
+        account.value = accounts[0]
+        await initProvider().catch(() => null)
+        if (provider) signer = await provider.getSigner().catch(() => null)
+      } else {
+        account.value = null
+        signer = null
+      }
+    })
+    injected.on('chainChanged', async (_chainId: string) => {
+      // re-init provider pour refléter le changement de réseau
+      await initProvider().catch(() => null)
+      if (provider) {
+        const net = await provider.getNetwork().catch(() => null)
+        chainName.value = net ? net.name : null
+        if (account.value) signer = await provider.getSigner().catch(() => null)
+      }
+    })
+  } catch (e) {
+    console.warn('attachWalletListeners:', e)
+  }
+}
+
 const account = ref<string | null>(null)
 const connecting = ref(false)
 const chainName = ref<string | null>(null)
@@ -138,8 +194,6 @@ const priceDisplay = computed(() => (price.value !== null ? `${price.value} cent
 const validNewPrice = computed(() => typeof newPrice.value === 'number' && newPrice.value >= 0)
 const signerReady = computed(() => !!signer)
 const oracleReady = computed(() => !!ORACLE_ADDR)
-const dexReady = computed(() => !!DEX_ADDR)
-const tokenReady = computed(() => !!TOKEN_ADDR)
 
 const OracleABI = [
   { inputs: [], name: 'getPrice', outputs: [{ type: 'uint256' }], stateMutability: 'view', type: 'function' },
@@ -225,45 +279,49 @@ async function initProvider() {
 }
 
 async function connectWallet() {
+  if (connecting.value) {
+    console.log('Connexion déjà en cours...')
+    return
+  }
+
   try {
     connecting.value = true
+    error.value = null
 
-    // Demander d'abord les comptes au provider (force l'ouverture de MetaMask)
     const injected = getInjectedProvider()
-    if (!injected) throw new Error('Aucun wallet injecté détecté (MetaMask/Coinbase).')
-    // Utiliser le provider sélectionné pour la requête d'accès aux comptes
-    await injected.request({ method: 'eth_requestAccounts' })
-    if (injected.isCoinbaseWallet && !injected.isMetaMask) {
-      // message informatif si Coinbase est le provider sélectionné
-      error.value = 'Wallet détecté: Coinbase Wallet. Si vous voulez utiliser MetaMask, activez/ouvrez MetaMask pour ce site.'
-    } else {
-      error.value = null
+    if (!injected) {
+      throw new Error('MetaMask non détecté')
     }
 
-    // Puis charger ethers et initialiser le provider/signature
-    const eth = await loadEthersIfNeeded().catch((err) => {
-      error.value = err?.message || 'Ethers non chargé (CDN).'
-      return null
-    })
-    if (!eth) return
+    // si déjà autorisé, pas besoin d'ouvrir le prompt
+    const accounts = await injected.request({ method: 'eth_accounts' }).catch(() => null)
+    if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
+      try {
+        await injected.request({ method: 'eth_requestAccounts' })
+      } catch (e: any) {
+        if (e?.code === -32002) {
+          error.value = 'Une demande de connexion est déjà en attente dans MetaMask. Veuillez vérifier votre extension.'
+          return
+        }
+        throw e
+      }
+    } else {
+      // already connected: set account immediately
+      account.value = accounts[0]
+    }
+
+    const eth = await loadEthersIfNeeded()
+    if (!eth) throw new Error('Ethers non chargé')
 
     await initProvider()
-    // S'assurer que provider est un BrowserProvider
-    if (!provider || !(provider instanceof eth.BrowserProvider)) {
-      const injected2 = getInjectedProvider() || (window as any).ethereum
-      provider = new eth.BrowserProvider(injected2)
-    }
-
     signer = await provider.getSigner()
     account.value = await signer.getAddress()
     const network = await provider.getNetwork()
     chainName.value = network.name
 
-    if (ORACLE_ADDR) oracle = new eth.Contract(ORACLE_ADDR, OracleABI, signer)
-    if (DEX_ADDR) dex = new eth.Contract(DEX_ADDR, SimpleDEXABI, signer)
-    if (TOKEN_ADDR) token = new eth.Contract(TOKEN_ADDR, ERC20ABI, signer)
   } catch (e: any) {
-    error.value = e?.message || 'Erreur MetaMask'
+    console.error('Erreur connexion:', e)
+    error.value = e?.message || 'Erreur de connexion'
   } finally {
     connecting.value = false
   }
@@ -273,15 +331,24 @@ async function fetchPrice() {
   loading.value = true
   error.value = null
   try {
-    await initProvider()
-    const readProvider = signer ?? provider
-    if (!ORACLE_ADDR || !readProvider) throw new Error('Oracle/Provider non configuré')
-    const eth = (window as any).ethers
-    const oc = new eth.Contract(ORACLE_ADDR, OracleABI, readProvider)
-    const p: bigint = await oc.getPrice()
-    price.value = Number(p)
+    console.log('Début fetch...')
+    const response = await fetch('http://localhost:3000/oracle/price', {
+      method: 'GET',
+      headers: {
+        'Accept': '*/*',
+      },
+      credentials: 'same-origin',
+      mode: 'cors'
+    })
+
+    console.log('Réponse:', response)
+    const text = await response.text()
+    console.log('Contenu:', text)
+
+    price.value = Number(text.replace('%', ''))
   } catch (e: any) {
-    error.value = e?.message || 'Erreur lors de la lecture du prix'
+    console.error('Erreur détaillée:', e)
+    error.value = 'Erreur lors de la lecture du prix'
   } finally {
     loading.value = false
   }
@@ -291,39 +358,65 @@ async function updatePrice() {
   if (!validNewPrice.value) return
   updateError.value = null
   updateMessage.value = null
+  updating.value = true
   try {
-    if (!signer || !ORACLE_ADDR) throw new Error('Signer/Oracle non prêt')
-    const eth = (window as any).ethers
-    const oc = new eth.Contract(ORACLE_ADDR, OracleABI, signer)
-    const tx = await oc.updatePrice(newPrice.value!)
-    await tx.wait()
-    updateMessage.value = `Prix mis à jour. Tx: ${tx.hash}`
+    const apiUrl = import.meta.env.VITE_ORACLE_UPDATE_URL ?? 'http://localhost:3000/oracle/update'
+    const body = { price: Number(newPrice.value) }
+    const res = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      mode: 'cors'
+    })
+    if (!res.ok) throw new Error(`API update failed: ${res.status}`)
+    // backend renvoie peut-être JSON { price: number } ou texte ; gérer les deux
+    let parsed: any = null
+    try { parsed = await res.json() } catch { parsed = await res.text().catch(() => null) }
+    updateMessage.value = parsed?.price ? `Prix mis à jour via API: ${parsed.price}` : `Prix mis à jour via API`
     await fetchPrice()
   } catch (e: any) {
     updateError.value = e?.message || 'Erreur lors de la mise à jour du prix'
+  } finally {
+    updating.value = false
   }
 }
 
 async function buyTokens() {
   swapError.value = null
   swapMessage.value = null
+  buying.value = true
   try {
-    if (!signer || !DEX_ADDR) throw new Error('Signer/DEX non prêt')
-    const eth = (window as any).ethers
-    const value = eth.parseEther(ethToSpend.value || '0')
-    if (value === 0n) throw new Error('Montant ETH invalide')
-    const dx = new eth.Contract(DEX_ADDR, SimpleDEXABI, signer)
-    const tx = await dx.buy({ value })
-    await tx.wait()
-    swapMessage.value = `Achat effectué. Tx: ${tx.hash}`
+    const amount = Number(ethToSpend.value)
+    if (!amount || isNaN(amount)) {
+      throw new Error('Montant ETH invalide')
+    }
+
+    const res = await fetch('http://localhost:3000/coffee-dex/swap-eth-to-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ethAmount: amount }),
+      mode: 'cors'
+    })
+
+    if (!res.ok) {
+      throw new Error(`Erreur API: ${res.status}`)
+    }
+
+    const data = await res.json()
+    swapMessage.value = `Achat effectué avec succès`
+    ethToSpend.value = '' // reset input
   } catch (e: any) {
-    swapError.value = e?.message || 'Erreur achat'
+    console.error('Erreur swap:', e)
+    swapError.value = e?.message || 'Erreur lors de l\'achat'
+  } finally {
+    buying.value = false
   }
 }
 
 async function sellTokens() {
   swapError.value = null
   swapMessage.value = null
+  selling.value = true
   try {
     if (!signer || !DEX_ADDR || !TOKEN_ADDR) throw new Error('Signer/DEX/TOKEN non prêt')
     const eth = (window as any).ethers
@@ -339,19 +432,23 @@ async function sellTokens() {
     swapMessage.value = `Vente effectuée. Tx: ${txSell.hash}`
   } catch (e: any) {
     swapError.value = e?.message || 'Erreur vente'
+  } finally {
+    selling.value = false
   }
 }
 
 onMounted(() => {
-  // Charger ethers avec timeout puis initialiser
-  loadEthersIfNeeded()
-    .then(() => {
-      initProvider()
-      fetchPrice()
-    })
-    .catch((err) => {
+  ;(async () => {
+    try {
+      await loadEthersIfNeeded()
+      await initProvider()
+      await checkConnection()
+      attachWalletListeners()
+      await fetchPrice()
+    } catch (err: any) {
       error.value = err?.message || 'Ethers non chargé (CDN). Vérifiez votre connexion.'
-    })
+    }
+  })()
 })
 </script>
 

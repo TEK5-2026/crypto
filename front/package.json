@@ -25,6 +25,8 @@
     "@tailwindcss/typography": "^0.5.16",
     "apexcharts": "^4.4.0",
     "dropzone": "^6.0.0-beta.2",
+    "ether": "^0.0.9",
+    "ethers": "^6.15.0",
     "flatpickr": "^4.6.13",
     "jsvectormap": "^1.6.0",
     "lucide-vue-next": "^0.474.0",
