@@ -385,7 +385,7 @@ async function buyTokens() {
   swapError.value = null
   swapMessage.value = null
   buying.value = true
-  
+
   try {
     const amount = Number(ethToSpend.value)
     if (!amount || isNaN(amount)) {
@@ -394,11 +394,11 @@ async function buyTokens() {
 
     const res = await fetch('http://localhost:3000/coffee-dex/swap-eth-to-token', {
       method: 'POST',
-      headers: { 
+      headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ 
-        ethAmount: amount 
+      body: JSON.stringify({
+        ethAmount: amount
       })
     })
 
@@ -406,7 +406,7 @@ async function buyTokens() {
     const responseText = await res.text()
     console.log('Raw response:', responseText)
     console.log('Response characters:', Array.from(responseText).map(c => c.charCodeAt(0)))
-    
+
     // Clean the response by removing any whitespace or special characters
     const cleanResponse = responseText.trim()
     console.log('Cleaned response:', cleanResponse)
@@ -430,21 +430,38 @@ async function sellTokens() {
   swapError.value = null
   swapMessage.value = null
   selling.value = true
+
   try {
-    if (!signer || !DEX_ADDR || !TOKEN_ADDR) throw new Error('Signer/DEX/TOKEN non prêt')
-    const eth = (window as any).ethers
-    const dx = new eth.Contract(DEX_ADDR, SimpleDEXABI, signer)
-    const tk = new eth.Contract(TOKEN_ADDR, ERC20ABI, signer)
-    const decimals: number = Number(await tk.decimals())
-    const amountWei = eth.parseUnits(tokensToSell.value || '0', decimals)
-    if (amountWei === 0n) throw new Error('Montant CTK invalide')
-    const txApprove = await tk.approve(DEX_ADDR, amountWei)
-    await txApprove.wait()
-    const txSell = await dx.sell(amountWei)
-    await txSell.wait()
-    swapMessage.value = `Vente effectuée. Tx: ${txSell.hash}`
+    const amount = Number(tokensToSell.value)
+    if (!amount || isNaN(amount)) {
+      throw new Error('Montant CTK invalide')
+    }
+
+    const res = await fetch('http://localhost:3000/coffee-dex/swap-token-to-eth', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        tokenAmount: amount
+      })
+    })
+
+    // Get raw response text first
+    const responseText = await res.text()
+    console.log('Raw sell response:', responseText)
+
+    if (!res.ok) {
+      throw new Error(`Erreur lors de la vente: ${responseText.trim()}`)
+    }
+
+    // The response should be a transaction hash
+    const txHash = responseText.trim()
+    swapMessage.value = `Vente effectuée avec succès. Transaction: ${txHash}`
+    tokensToSell.value = '' // Reset input
   } catch (e: any) {
-    swapError.value = e?.message || 'Erreur vente'
+    console.error('Erreur vente détaillée:', e)
+    swapError.value = e?.message || 'Erreur lors de la vente'
   } finally {
     selling.value = false
   }
