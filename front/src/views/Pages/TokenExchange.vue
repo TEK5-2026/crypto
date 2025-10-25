@@ -385,6 +385,7 @@ async function buyTokens() {
   swapError.value = null
   swapMessage.value = null
   buying.value = true
+  
   try {
     const amount = Number(ethToSpend.value)
     if (!amount || isNaN(amount)) {
@@ -393,21 +394,33 @@ async function buyTokens() {
 
     const res = await fetch('http://localhost:3000/coffee-dex/swap-eth-to-token', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ethAmount: amount }),
-      mode: 'cors'
+      headers: { 
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ 
+        ethAmount: amount 
+      })
     })
 
+    // Get raw response and log exact characters
+    const responseText = await res.text()
+    console.log('Raw response:', responseText)
+    console.log('Response characters:', Array.from(responseText).map(c => c.charCodeAt(0)))
+    
+    // Clean the response by removing any whitespace or special characters
+    const cleanResponse = responseText.trim()
+    console.log('Cleaned response:', cleanResponse)
+
     if (!res.ok) {
-      throw new Error(`Erreur API: ${res.status}`)
+      throw new Error(`Erreur lors du swap: ${cleanResponse}`)
     }
 
-    const data = await res.json()
-    swapMessage.value = `Achat effectué avec succès`
-    ethToSpend.value = '' // reset input
+    // Use the cleaned response as transaction hash
+    swapMessage.value = `Swap effectué avec succès. Transaction: ${cleanResponse}`
+    ethToSpend.value = ''
   } catch (e: any) {
-    console.error('Erreur swap:', e)
-    swapError.value = e?.message || 'Erreur lors de l\'achat'
+    console.error('Erreur swap détaillée:', e)
+    swapError.value = e?.message || 'Erreur lors du swap'
   } finally {
     buying.value = false
   }
