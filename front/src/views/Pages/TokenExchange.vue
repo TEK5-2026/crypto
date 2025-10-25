@@ -109,6 +109,64 @@ function getInjectedProvider(): any {
   return eth
 }
 
+// Vérifie si le wallet est déjà autorisé (pas de prompt)
+async function checkConnection(): Promise<boolean> {
+  const injected = getInjectedProvider()
+  if (!injected) return false
+  try {
+    const accounts = await injected.request({ method: 'eth_accounts' })
+    if (Array.isArray(accounts) && accounts.length > 0) {
+      // s'assurer que provider/signature sont prêts
+      await initProvider().catch(() => null)
+      if (provider) {
+        try {
+          signer = await provider.getSigner()
+          account.value = accounts[0]
+          const network = await provider.getNetwork()
+          chainName.value = network?.name ?? null
+        } catch (e) {
+          // ignore signer errors
+        }
+      } else {
+        account.value = accounts[0]
+      }
+      return true
+    }
+  } catch (e) {
+    console.warn('checkConnection error', e)
+  }
+  return false
+}
+
+// Écoute les changements côté extension (compte / réseau)
+function attachWalletListeners() {
+  const injected = getInjectedProvider()
+  if (!injected || typeof injected.on !== 'function') return
+  try {
+    injected.on('accountsChanged', async (accounts: string[]) => {
+      if (Array.isArray(accounts) && accounts.length > 0) {
+        account.value = accounts[0]
+        await initProvider().catch(() => null)
+        if (provider) signer = await provider.getSigner().catch(() => null)
+      } else {
+        account.value = null
+        signer = null
+      }
+    })
+    injected.on('chainChanged', async (_chainId: string) => {
+      // re-init provider pour refléter le changement de réseau
+      await initProvider().catch(() => null)
+      if (provider) {
+        const net = await provider.getNetwork().catch(() => null)
+        chainName.value = net ? net.name : null
+        if (account.value) signer = await provider.getSigner().catch(() => null)
+      }
+    })
+  } catch (e) {
+    console.warn('attachWalletListeners:', e)
+  }
+}
+
 const account = ref<string | null>(null)
 const connecting = ref(false)
 const chainName = ref<string | null>(null)
@@ -239,14 +297,21 @@ async function connectWallet() {
       throw new Error('MetaMask non détecté')
     }
 
-    try {
-      await injected.request({ method: 'eth_requestAccounts' })
-    } catch (e: any) {
-      if (e?.code === -32002) {
-        error.value = 'Une demande de connexion est déjà en attente dans MetaMask. Veuillez vérifier votre extension.'
-        return
+    // si déjà autorisé, pas besoin d'ouvrir le prompt
+    const accounts = await injected.request({ method: 'eth_accounts' }).catch(() => null)
+    if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
+      try {
+        await injected.request({ method: 'eth_requestAccounts' })
+      } catch (e: any) {
+        if (e?.code === -32002) {
+          error.value = 'Une demande de connexion est déjà en attente dans MetaMask. Veuillez vérifier votre extension.'
+          return
+        }
+        throw e
       }
-      throw e
+    } else {
+      // already connected: set account immediately
+      account.value = accounts[0]
     }
 
     const eth = await loadEthersIfNeeded()
@@ -349,15 +414,17 @@ async function sellTokens() {
 }
 
 onMounted(() => {
-  // Charger ethers avec timeout puis initialiser
-  loadEthersIfNeeded()
-    .then(() => {
-      initProvider()
-      fetchPrice()
-    })
-    .catch((err) => {
+  ;(async () => {
+    try {
+      await loadEthersIfNeeded()
+      await initProvider()
+      await checkConnection()
+      attachWalletListeners()
+      await fetchPrice()
+    } catch (err: any) {
       error.value = err?.message || 'Ethers non chargé (CDN). Vérifiez votre connexion.'
-    })
+    }
+  })()
 })
 </script>
 
