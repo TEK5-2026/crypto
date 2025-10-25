@@ -1,5 +1,8 @@
-import crypto from 'crypto';
-(global as any).crypto = crypto;
+import * as crypto from 'crypto';
+
+if (!(global as any).crypto) {
+  (global as any).crypto = crypto.webcrypto;
+}
 
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
