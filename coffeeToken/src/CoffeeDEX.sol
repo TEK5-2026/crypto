@@ -34,30 +34,37 @@ contract CoffeeDEX {
         emit LiquidityAdded(msg.sender, tokenAmount, msg.value);
     }
 
-    // 👇 Swap ETH -> CTK (simplifié)
+    // Swap ETH -> CTK (simplifié)
     function swapEthToToken() external payable onlyAllowed(msg.sender) {
         require(msg.value > 0, "Send ETH to swap");
-        uint256 tokenOut = (msg.value * tokenReserve) / ethReserve;
-        require(token.balanceOf(address(this)) >= tokenOut, "Not enough tokens in pool");
-        ethReserve += msg.value;
-        tokenReserve -= tokenOut;
-        token.transfer(msg.sender, tokenOut);
+        require(ethReserve > 0 && tokenReserve > 0, "INSUFFICIENT_LIQUIDITY");
+        uint256 ethIn = msg.value;
 
+        // Standard formula: tokenOut = (ethIn * tokenReserve) / (ethReserve + ethIn)
+        uint256 tokenOut = (ethIn * tokenReserve) / (ethReserve + ethIn);
+        require(token.balanceOf(address(this)) >= tokenOut, "Not enough tokens in pool");
+
+        ethReserve += ethIn;
+        tokenReserve -= tokenOut;
+
+        token.transfer(msg.sender, tokenOut);
         emit Swapped(msg.sender, 0, tokenOut);
     }
 
-    // 👇 Swap CTK -> ETH (simplifié)
+    // Swap CTK -> ETH (simplifié)
     function swapTokenToEth(uint256 tokenIn) external onlyAllowed(msg.sender) {
+        require(tokenIn > 0, "Send tokens to swap");
         require(token.balanceOf(msg.sender) >= tokenIn, "Not enough tokens");
-        uint256 ethOut = (tokenIn * ethReserve) / tokenReserve;
+        require(tokenReserve > 0, "NO_LIQUIDITY");
+        uint256 ethOut = (tokenIn * ethReserve) / (tokenReserve + tokenIn);
+
         require(address(this).balance >= ethOut, "Not enough ETH in pool");
-        // pull tokens from the user into the pool using allowance
+        
         token.transferFrom(msg.sender, address(this), tokenIn);
         tokenReserve += tokenIn;
         ethReserve -= ethOut;
 
         payable(msg.sender).transfer(ethOut);
-
         emit Swapped(msg.sender, tokenIn, ethOut);
     }
 }
