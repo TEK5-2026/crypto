@@ -56,20 +56,18 @@
           <input type="text" class="border rounded-md px-3 py-2 w-48" v-model="ethToSpend" placeholder="ETH à dépenser" />
           <button
             class="ml-3 px-4 py-2 rounded-md bg-brand-500 text-white hover:bg-brand-600 disabled:bg-gray-300"
-            :disabled="!dexReady || !signerReady || buying"
+            :disabled="!account || buying"
             @click="buyTokens"
           >Acheter</button>
-          <p v-if="!dexReady" class="text-orange-500 mt-2">Configurez VITE_DEX_ADDRESS dans front/.env</p>
         </div>
         <div>
           <h3 class="font-medium mb-2">Vendre des CTK contre ETH</h3>
           <input type="text" class="border rounded-md px-3 py-2 w-48" v-model="tokensToSell" placeholder="CTK à vendre" />
           <button
             class="ml-3 px-4 py-2 rounded-md bg-brand-500 text-white hover:bg-brand-600 disabled:bg-gray-300"
-            :disabled="!dexReady || !tokenReady || !signerReady || selling"
+            :disabled="!account || selling"
             @click="sellTokens"
           >Vendre</button>
-          <p v-if="!tokenReady" class="text-orange-500 mt-2">Configurez VITE_TOKEN_ADDRESS dans front/.env</p>
         </div>
       </div>
       <p v-if="swapError" class="text-error-500 mt-2">{{ swapError }}</p>
@@ -196,8 +194,6 @@ const priceDisplay = computed(() => (price.value !== null ? `${price.value} cent
 const validNewPrice = computed(() => typeof newPrice.value === 'number' && newPrice.value >= 0)
 const signerReady = computed(() => !!signer)
 const oracleReady = computed(() => !!ORACLE_ADDR)
-const dexReady = computed(() => !!DEX_ADDR)
-const tokenReady = computed(() => !!TOKEN_ADDR)
 
 const OracleABI = [
   { inputs: [], name: 'getPrice', outputs: [{ type: 'uint256' }], stateMutability: 'view', type: 'function' },
@@ -388,23 +384,39 @@ async function updatePrice() {
 async function buyTokens() {
   swapError.value = null
   swapMessage.value = null
+  buying.value = true
   try {
-    if (!signer || !DEX_ADDR) throw new Error('Signer/DEX non prêt')
-    const eth = (window as any).ethers
-    const value = eth.parseEther(ethToSpend.value || '0')
-    if (value === 0n) throw new Error('Montant ETH invalide')
-    const dx = new eth.Contract(DEX_ADDR, SimpleDEXABI, signer)
-    const tx = await dx.buy({ value })
-    await tx.wait()
-    swapMessage.value = `Achat effectué. Tx: ${tx.hash}`
+    const amount = Number(ethToSpend.value)
+    if (!amount || isNaN(amount)) {
+      throw new Error('Montant ETH invalide')
+    }
+
+    const res = await fetch('http://localhost:3000/coffee-dex/swap-eth-to-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ethAmount: amount }),
+      mode: 'cors'
+    })
+
+    if (!res.ok) {
+      throw new Error(`Erreur API: ${res.status}`)
+    }
+
+    const data = await res.json()
+    swapMessage.value = `Achat effectué avec succès`
+    ethToSpend.value = '' // reset input
   } catch (e: any) {
-    swapError.value = e?.message || 'Erreur achat'
+    console.error('Erreur swap:', e)
+    swapError.value = e?.message || 'Erreur lors de l\'achat'
+  } finally {
+    buying.value = false
   }
 }
 
 async function sellTokens() {
   swapError.value = null
   swapMessage.value = null
+  selling.value = true
   try {
     if (!signer || !DEX_ADDR || !TOKEN_ADDR) throw new Error('Signer/DEX/TOKEN non prêt')
     const eth = (window as any).ethers
@@ -420,6 +432,8 @@ async function sellTokens() {
     swapMessage.value = `Vente effectuée. Tx: ${txSell.hash}`
   } catch (e: any) {
     swapError.value = e?.message || 'Erreur vente'
+  } finally {
+    selling.value = false
   }
 }
 
